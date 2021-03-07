@@ -2,7 +2,7 @@ Instruction:
 This app scans your m3u file, and creates a new one besides him with only working links, the non working ones will be ignored.
 
 Info: This app isn't perfect, it may vary file to file, but you can change the TimeOut by adding an arg "-timeOut 5" 5 stands for seconds.
-      Default TimeOut is 10
+      Default Time out is 10 seconds.
 
 1. open a terminal inside the project
 2. type dotnet run
@@ -16,7 +16,11 @@ ___
 Or you can add arguments like -src and -dest, to set the source path and destination manually, or to be scripted, set the timeout -timeOut 5;
 
 Example of putting link: dotnet run --src link --dest "C:\Users\{username}\Desktop\test.m3u";
-if you dont give a destination to a link, it will be created in the porject folder a file "TempFile" And "TempFile-cleaned"  
+if you put a link instead of a path from your pc, and you dont specifiy a destination argument --dest [path], beside the application path, or project
+will be created a Folder named Temp, and inside a file with the current date as name.
+
+Known Issue:
+if you run the program with arguments like --src "c:\user\documents\file.m3u" || dont forget to use the double quotes, otherwise doesn't work
 
 
 Linux use:
