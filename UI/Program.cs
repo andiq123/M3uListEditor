@@ -54,7 +54,7 @@ namespace UI
             {
                 sb.AppendLine($"And were removed { report.DoublesRemovedCount} channels becaused were doubles.");
                 sb.AppendLine($"There were { report.TotalChannelsCount + report.DoublesRemovedCount } channels.");
-                sb.AppendLine($"Now There are { report.TotalChannelsCount} channels.");
+                sb.AppendLine($"Now There are { report.WorkingChannelsCount} channels.");
             }
             return sb.ToString();
         }
