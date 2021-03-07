@@ -20,8 +20,10 @@ if you dont give a destination to a link, it will be created in the porject fold
 
 
 Linux use:
+1. Download the pre release winrar
+2. Unzip, and inside the folder
 1. Open a terminal
-2. chmod +x ListEditor
-3. ./ListEditor
-5. example of use with arugments ./ListEditor -src [sourcePath Or Link] -dst [DestinationPath]
-6. or you can just type ./ListEditor and press enter, follow instructions
+2. chmod +x UI
+3. ./UI
+5. example of use with arugments ./UI -src [sourcePath Or Link] -dst [DestinationPath]
+6. or you can just type ./UI and press enter, follow instructions
