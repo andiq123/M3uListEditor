@@ -48,13 +48,13 @@ namespace UI
             sb.AppendLine($"Finished! { report.WorkingChannelsCount} channels are working out of { report.TotalChannelsCount}");
             if (report.DoublesRemovedCount == 0)
             {
-                sb.AppendLine($"No Doubles found to remove");
+                sb.AppendLine($"No duplicates found to remove");
             }
             else
             {
-                sb.AppendLine($"And were removed { report.DoublesRemovedCount} channels becaused were doubles.");
+                sb.AppendLine($"And were removed { report.DoublesRemovedCount} channels becaused were duplicates.");
                 sb.AppendLine($"There were { report.TotalChannelsCount + report.DoublesRemovedCount } channels.");
-                sb.AppendLine($"Now There are { report.WorkingChannelsCount} channels.");
+                sb.AppendLine($"Now there are { report.WorkingChannelsCount} channels.");
             }
             return sb.ToString();
         }
