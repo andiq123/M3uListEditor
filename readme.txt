@@ -20,7 +20,7 @@ if you dont give a destination to a link, it will be created in the porject fold
 
 
 Linux use:
-1. Download the pre release winrar
+1. Download the pre release winrar v1.rar
 2. Unzip, and inside the folder
 1. Open a terminal
 2. chmod +x UI
