@@ -8,7 +8,7 @@ Info: This app isn't perfect, it may vary file to file, but you can change the T
 2. type dotnet run
 3. drag and drop the m3u file, or paste a link from internet
 4. wait to end the process
-4. beside the original file should appear a new file with the same name and the prefix -cleaned
+4. beside the original file should appear a new file with the same name and the postfix -cleaned
 5. enjoy
 6. New Feature, app removes automatically if finds doubles, you can deactivate it, use argument: -rd false OR -removeDoubles false
 ___
