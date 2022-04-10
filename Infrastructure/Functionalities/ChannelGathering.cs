@@ -17,9 +17,9 @@ namespace Infrastructure.Functionalities
                 List<Channel> channels = new List<Channel>();
                 var lines = await File.ReadAllLinesAsync(path);
 
-                var names = lines.Where(x => x.Contains("#EXTINF:") || x.Contains("#EXTUBF:")).ToArray();
+                var names = lines.Where(x => x.Contains("#EXTINF")).ToArray();
                 var groupNames = lines.Where(x => x.Contains("#EXTGRP:")).ToArray();
-                var links = lines.Where(x => !String.IsNullOrEmpty(x) && (x.Substring(0, 4) == "http" || x.Substring(0, 6) == "plugin")).ToArray();
+                var links = lines.Where(x => x[0] != '#' && x.Contains("://")).ToArray();
 
                 if (groupNames.Count() > 0)
                 {
