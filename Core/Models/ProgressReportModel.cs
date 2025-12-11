@@ -1,13 +1,29 @@
-using System.Collections.Generic;
+namespace Core.Models;
 
-namespace Core.Models
+/// <summary>
+/// Reports progress during channel filtering.
+/// </summary>
+public record ProgressReportModel
 {
-    public class ProgressReportModel
-    {
-        public int PercentageCompleted { get; set; } = 0;
-        public int ChannelsCountTotal { get; set; } = 0;
-        public int NotWorkingChannelsCount { get; set; } = 0;
-        public List<Channel> WorkingChannels { get; set; } = new List<Channel>();
+    /// <summary>
+    /// Percentage of channels processed (0-100).
+    /// </summary>
+    public int PercentageCompleted { get; init; }
 
-    }
+    /// <summary>
+    /// Total number of channels to process.
+    /// </summary>
+    public int ChannelsCountTotal { get; init; }
+
+    /// <summary>
+    /// Number of channels that passed testing.
+    /// </summary>
+    public int WorkingChannelsCount { get; init; }
+
+    /// <summary>
+    /// Number of channels that failed testing.
+    /// </summary>
+    public int NotWorkingChannelsCount { get; init; }
+
+    // Removed: IReadOnlyList<Channel> WorkingChannels - was causing unnecessary allocations
 }
