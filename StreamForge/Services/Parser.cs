@@ -1,22 +1,36 @@
 using System.Text.RegularExpressions;
-using Core.Interfaces;
-using Core.Models;
+using StreamForge.Core;
 
-namespace Infrastructure.Services;
+namespace StreamForge.Services;
 
 /// <summary>
 /// High-performance parser for M3U/M3U8 playlist files.
 /// </summary>
-public sealed partial class M3uParser : IChannelParser
+public sealed partial class Parser
 {
-    [GeneratedRegex(@"tvg-name\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    [GeneratedRegex(@"tvg-id\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase)]
+    private static partial Regex TvgIdRegex();
+
+    [GeneratedRegex(@"tvg-name\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase)]
     private static partial Regex TvgNameRegex();
 
-    [GeneratedRegex(@"group-title\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    [GeneratedRegex(@"tvg-logo\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase)]
+    private static partial Regex TvgLogoRegex();
+
+    [GeneratedRegex(@"group-title\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase)]
     private static partial Regex GroupTitleRegex();
 
-    [GeneratedRegex(@"#EXTINF\s*:\s*-?\d+[^,]*,\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    [GeneratedRegex(@"#EXTINF\s*:\s*-?\d+[^,]*,\s*(.+)$", RegexOptions.IgnoreCase)]
     private static partial Regex DisplayNameRegex();
+
+    [GeneratedRegex(@"x-tvg-url\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase)]
+    private static partial Regex EpgUrlRegex();
+
+    [GeneratedRegex(@"url-tvg\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase)]
+    private static partial Regex EpgUrlAltRegex();
+
+    [GeneratedRegex(@"(\w+[-\w]*)\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase)]
+    private static partial Regex AllAttributesRegex();
 
     private static readonly HashSet<string> ValidProtocols = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -32,7 +46,8 @@ public sealed partial class M3uParser : IChannelParser
         ".zip", ".rar", ".7z", ".tar", ".gz"
     };
 
-    /// <inheritdoc />
+    private string? _globalEpgUrl;
+
     public async Task<IReadOnlyList<Channel>> ParseAsync(string filePath, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
@@ -49,6 +64,14 @@ public sealed partial class M3uParser : IChannelParser
         var channels = new List<Channel>(Math.Max(100, lines.Length / 3));
         var id = 0;
         var i = 0;
+
+        _globalEpgUrl = null;
+
+        if (lines.Length > 0 && lines[0].StartsWith("#EXTM3U", StringComparison.OrdinalIgnoreCase))
+        {
+            _globalEpgUrl = ExtractMatch(EpgUrlRegex(), lines[0]) ?? ExtractMatch(EpgUrlAltRegex(), lines[0]);
+            i = 1;
+        }
 
         while (i < lines.Length)
         {
@@ -69,12 +92,8 @@ public sealed partial class M3uParser : IChannelParser
             }
 
             var extinfLine = line.Trim();
-            var groupName = string.Empty;
+            var channel = ParseExtinfLine(extinfLine, id);
             string? link = null;
-
-            var (displayName, groupFromExtinf) = ParseExtinfLine(extinfLine);
-            if (!string.IsNullOrEmpty(groupFromExtinf))
-                groupName = groupFromExtinf;
 
             var searchLimit = Math.Min(i + 5, lines.Length);
             for (var j = i + 1; j < searchLimit; j++)
@@ -88,7 +107,7 @@ public sealed partial class M3uParser : IChannelParser
 
                 if (nextTrimmed.StartsWith("#EXTGRP:", StringComparison.OrdinalIgnoreCase))
                 {
-                    groupName = nextLine.Trim()[8..].Trim();
+                    channel = channel with { GroupName = nextLine.Trim()[8..].Trim() };
                     continue;
                 }
 
@@ -105,7 +124,15 @@ public sealed partial class M3uParser : IChannelParser
             }
 
             if (!string.IsNullOrEmpty(link))
-                channels.Add(new Channel(id++, displayName, link, groupName));
+            {
+                channel = channel with
+                {
+                    Id = id++,
+                    Link = link,
+                    EpgUrl = channel.EpgUrl ?? _globalEpgUrl
+                };
+                channels.Add(channel);
+            }
 
             i++;
         }
@@ -114,28 +141,54 @@ public sealed partial class M3uParser : IChannelParser
         return channels;
     }
 
-    private static (string DisplayName, string Group) ParseExtinfLine(string line)
+    private static Channel ParseExtinfLine(string line, int id)
     {
         var displayName = line;
-        var group = string.Empty;
+        var tvgId = ExtractMatch(TvgIdRegex(), line);
+        var tvgName = ExtractMatch(TvgNameRegex(), line);
+        var tvgLogo = ExtractMatch(TvgLogoRegex(), line);
+        var groupTitle = ExtractMatch(GroupTitleRegex(), line);
+        var epgUrl = ExtractMatch(EpgUrlRegex(), line);
 
-        var tvgMatch = TvgNameRegex().Match(line);
-        if (tvgMatch.Success && !string.IsNullOrWhiteSpace(tvgMatch.Groups[1].Value))
+        var nameMatch = DisplayNameRegex().Match(line);
+        if (nameMatch.Success && !string.IsNullOrWhiteSpace(nameMatch.Groups[1].Value))
+            displayName = nameMatch.Groups[1].Value.Trim();
+        else if (!string.IsNullOrWhiteSpace(tvgName))
+            displayName = tvgName;
+
+        var extraAttributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var knownAttrs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            displayName = tvgMatch.Groups[1].Value.Trim();
-        }
-        else
+            "tvg-id", "tvg-name", "tvg-logo", "group-title", "x-tvg-url", "url-tvg"
+        };
+
+        foreach (Match match in AllAttributesRegex().Matches(line))
         {
-            var nameMatch = DisplayNameRegex().Match(line);
-            if (nameMatch.Success && !string.IsNullOrWhiteSpace(nameMatch.Groups[1].Value))
-                displayName = nameMatch.Groups[1].Value.Trim();
+            var key = match.Groups[1].Value;
+            var value = match.Groups[2].Value;
+            if (!knownAttrs.Contains(key) && !string.IsNullOrWhiteSpace(value))
+                extraAttributes[key] = value;
         }
 
-        var groupMatch = GroupTitleRegex().Match(line);
-        if (groupMatch.Success)
-            group = groupMatch.Groups[1].Value.Trim();
+        return new Channel
+        {
+            Id = id,
+            Name = displayName,
+            TvgId = tvgId,
+            TvgName = tvgName,
+            TvgLogo = tvgLogo,
+            GroupName = groupTitle ?? string.Empty,
+            EpgUrl = epgUrl,
+            ExtraAttributes = extraAttributes
+        };
+    }
 
-        return (displayName, group);
+    private static string? ExtractMatch(Regex regex, string input)
+    {
+        var match = regex.Match(input);
+        return match.Success && !string.IsNullOrWhiteSpace(match.Groups[1].Value)
+            ? match.Groups[1].Value.Trim()
+            : null;
     }
 
     private static bool IsValidStreamUrl(string url)

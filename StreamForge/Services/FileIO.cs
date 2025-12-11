@@ -1,26 +1,26 @@
 using System.Text;
-using Core.Interfaces;
+using StreamForge.Core;
 
-namespace Infrastructure.Services;
+namespace StreamForge.Services;
 
 /// <summary>
-/// Downloads files from remote URLs with streaming support and robust error handling.
+/// Handles file system operations including downloading, reading, and writing M3U files.
 /// </summary>
-public sealed class FileDownloader : IFileDownloader
+public sealed class FileIO
 {
     private readonly HttpClient _client;
-    private readonly IFileHandler _fileHandler;
     private readonly string _tempDirectory;
-    private const int BufferSize = 81920;
+    private const int BufferSize = 65536;
 
-    public FileDownloader(HttpClient client, IFileHandler fileHandler)
+    public FileIO(HttpClient client)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
-        _fileHandler = fileHandler ?? throw new ArgumentNullException(nameof(fileHandler));
-        _tempDirectory = Path.Combine(Path.GetTempPath(), "M3uListEditor");
+        _tempDirectory = Path.Combine(Path.GetTempPath(), "StreamForge");
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Downloads a file from URL to local temp directory.
+    /// </summary>
     public async Task<string> DownloadAsync(string url, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(url);
@@ -31,37 +31,35 @@ public sealed class FileDownloader : IFileDownloader
         if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
             throw new ArgumentException($"URL must use HTTP or HTTPS protocol: {url}", nameof(url));
 
-        _fileHandler.EnsureDirectoryExists(_tempDirectory);
+        EnsureDirectoryExists(_tempDirectory);
 
         var fileName = GenerateFileName(uri);
         var filePath = Path.Combine(_tempDirectory, fileName);
 
-        _fileHandler.DeleteFileIfExists(filePath);
+        DeleteFileIfExists(filePath);
 
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (compatible; M3uListEditor/2.0)");
+            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (compatible; StreamForge/2.0)");
             request.Headers.TryAddWithoutValidation("Accept", "*/*");
 
             using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
-                throw new HttpRequestException($"Failed to download from {url}. Status: {response.StatusCode} ({(int)response.StatusCode})");
+                throw new HttpRequestException($"Failed to download from {url}. Status: {response.StatusCode}");
 
             await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
             await using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize, FileOptions.Asynchronous);
 
             var encoding = await DetectEncodingAsync(contentStream, cancellationToken);
-            if (contentStream.CanSeek)
-                contentStream.Position = 0;
+            if (contentStream.CanSeek) contentStream.Position = 0;
 
             await using var writer = new StreamWriter(fileStream, Encoding.UTF8, BufferSize);
             using var reader = new StreamReader(contentStream, encoding, detectEncodingFromByteOrderMarks: true);
 
             var buffer = new char[BufferSize];
             int charsRead;
-
             while ((charsRead = await reader.ReadAsync(buffer, cancellationToken)) > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -72,24 +70,92 @@ public sealed class FileDownloader : IFileDownloader
         }
         catch (HttpRequestException ex)
         {
-            _fileHandler.DeleteFileIfExists(filePath);
+            DeleteFileIfExists(filePath);
             throw new InvalidOperationException($"Failed to download M3U file from {url}: {ex.Message}", ex);
         }
         catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _fileHandler.DeleteFileIfExists(filePath);
+            DeleteFileIfExists(filePath);
             throw;
         }
         catch (TaskCanceledException ex)
         {
-            _fileHandler.DeleteFileIfExists(filePath);
+            DeleteFileIfExists(filePath);
             throw new TimeoutException($"Download timed out for {url}", ex);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _fileHandler.DeleteFileIfExists(filePath);
+            DeleteFileIfExists(filePath);
             throw new InvalidOperationException($"Error downloading from {url}: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// Writes channels to an M3U file.
+    /// </summary>
+    public async Task WriteChannelsAsync(string path, IEnumerable<Channel> channels, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(channels);
+
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            Directory.CreateDirectory(directory);
+
+        await using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize, FileOptions.Asynchronous);
+        await using var writer = new StreamWriter(stream, Encoding.UTF8, BufferSize);
+
+        var channelList = channels as IReadOnlyList<Channel> ?? channels.ToList();
+        var globalEpgUrl = channelList.FirstOrDefault(c => !string.IsNullOrEmpty(c.EpgUrl))?.EpgUrl;
+
+        if (!string.IsNullOrEmpty(globalEpgUrl))
+            await writer.WriteLineAsync($"#EXTM3U x-tvg-url=\"{globalEpgUrl}\"");
+        else
+            await writer.WriteLineAsync("#EXTM3U");
+
+        foreach (var channel in channelList)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await writer.WriteLineAsync(FormatExtinfLine(channel));
+
+            if (!string.IsNullOrEmpty(channel.GroupName) && !channel.Name.Contains("group-title=", StringComparison.OrdinalIgnoreCase))
+                await writer.WriteLineAsync($"#EXTGRP:{channel.GroupName}");
+
+            await writer.WriteLineAsync(channel.Link);
+        }
+    }
+
+    public void DeleteFileIfExists(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    public void EnsureDirectoryExists(string path)
+    {
+        if (!string.IsNullOrEmpty(path) && !Directory.Exists(path))
+            Directory.CreateDirectory(path);
+    }
+
+    private static string FormatExtinfLine(Channel channel)
+    {
+        if (channel.Name.StartsWith("#EXTINF", StringComparison.OrdinalIgnoreCase))
+            return channel.Name;
+
+        var sb = new StringBuilder("#EXTINF:-1");
+
+        if (!string.IsNullOrEmpty(channel.TvgId)) sb.Append($" tvg-id=\"{channel.TvgId}\"");
+        if (!string.IsNullOrEmpty(channel.TvgName)) sb.Append($" tvg-name=\"{channel.TvgName}\"");
+        if (!string.IsNullOrEmpty(channel.TvgLogo)) sb.Append($" tvg-logo=\"{channel.TvgLogo}\"");
+        if (channel.Language != null) sb.Append($" tvg-language=\"{channel.Language.Name}\"");
+        if (!string.IsNullOrEmpty(channel.GroupName)) sb.Append($" group-title=\"{channel.GroupName}\"");
+
+        foreach (var attr in channel.ExtraAttributes)
+            sb.Append($" {attr.Key}=\"{attr.Value}\"");
+
+        sb.Append($",{channel.TvgName ?? channel.Name}");
+        return sb.ToString();
     }
 
     private static string GenerateFileName(Uri uri)
@@ -111,22 +177,17 @@ public sealed class FileDownloader : IFileDownloader
     {
         var invalidChars = Path.GetInvalidFileNameChars();
         var sb = new StringBuilder(name.Length);
-
         foreach (var c in name)
         {
-            if (!invalidChars.Contains(c) && c != ' ')
-                sb.Append(c);
-            else if (c == ' ')
-                sb.Append('_');
+            if (!invalidChars.Contains(c) && c != ' ') sb.Append(c);
+            else if (c == ' ') sb.Append('_');
         }
-
         return sb.ToString();
     }
 
     private static async Task<Encoding> DetectEncodingAsync(Stream stream, CancellationToken cancellationToken)
     {
-        if (!stream.CanSeek)
-            return Encoding.UTF8;
+        if (!stream.CanSeek) return Encoding.UTF8;
 
         var bom = new byte[4];
         var bytesRead = await stream.ReadAsync(bom.AsMemory(0, 4), cancellationToken);

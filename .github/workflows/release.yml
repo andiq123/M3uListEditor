@@ -100,19 +100,19 @@ jobs:
         include:
           - os: ubuntu-latest
             runtime: linux-x64
-            artifact: m3u-editor-linux-x64
+            artifact: streamforge-linux-x64
           - os: ubuntu-latest
             runtime: linux-arm64
-            artifact: m3u-editor-linux-arm64
+            artifact: streamforge-linux-arm64
           - os: windows-latest
             runtime: win-x64
-            artifact: m3u-editor-win-x64.exe
+            artifact: streamforge-win-x64.exe
           - os: macos-latest
             runtime: osx-x64
-            artifact: m3u-editor-osx-x64
+            artifact: streamforge-osx-x64
           - os: macos-latest
             runtime: osx-arm64
-            artifact: m3u-editor-osx-arm64
+            artifact: streamforge-osx-arm64
 
     runs-on: ${{ matrix.os }}
 
@@ -129,15 +129,15 @@ jobs:
         run: dotnet restore
 
       - name: Publish
-        run: dotnet publish UI/UI.csproj -c Release -r ${{ matrix.runtime }} --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:Version=${{ needs.version.outputs.version }} -o ./publish
+        run: dotnet publish StreamForge/StreamForge.csproj -c Release -r ${{ matrix.runtime }} --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:Version=${{ needs.version.outputs.version }} -o ./publish
 
       - name: Rename artifact (Unix)
         if: matrix.os != 'windows-latest'
-        run: mv ./publish/UI ./publish/${{ matrix.artifact }}
+        run: mv ./publish/streamforge ./publish/${{ matrix.artifact }}
 
       - name: Rename artifact (Windows)
         if: matrix.os == 'windows-latest'
-        run: mv ./publish/UI.exe ./publish/${{ matrix.artifact }}
+        run: mv ./publish/streamforge.exe ./publish/${{ matrix.artifact }}
         shell: bash
 
       - name: Upload artifact
@@ -189,11 +189,11 @@ jobs:
           name: ${{ needs.version.outputs.tag }}
           body_path: changelog.md
           files: |
-            ./artifacts/m3u-editor-win-x64.exe/*
-            ./artifacts/m3u-editor-osx-x64/*
-            ./artifacts/m3u-editor-osx-arm64/*
-            ./artifacts/m3u-editor-linux-x64/*
-            ./artifacts/m3u-editor-linux-arm64/*
+            ./artifacts/streamforge-win-x64.exe/*
+            ./artifacts/streamforge-osx-x64/*
+            ./artifacts/streamforge-osx-arm64/*
+            ./artifacts/streamforge-linux-x64/*
+            ./artifacts/streamforge-linux-arm64/*
           draft: false
           prerelease: false
         env:
