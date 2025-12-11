@@ -40,10 +40,8 @@ public sealed class M3uCleanerEngine
             throw new ArgumentException("Source and export paths must be specified.", nameof(settings));
         }
 
-        // Parse channels from file
         var channels = await _parser.ParseAsync(settings.SourcePath, cancellationToken);
 
-        // Remove duplicates if enabled
         var doublesRemoved = 0;
         if (settings.RemoveDoubles)
         {
@@ -52,10 +50,7 @@ public sealed class M3uCleanerEngine
             doublesRemoved = result.RemovedCount;
         }
 
-        // Filter to only working channels
         var workingChannels = await _filter.FilterWorkingAsync(channels, progress, cancellationToken);
-
-        // Write only working channels to output file
         await _fileHandler.WriteChannelsAsync(settings.ExportPath, workingChannels, cancellationToken);
 
         return new FinalChannelReport(

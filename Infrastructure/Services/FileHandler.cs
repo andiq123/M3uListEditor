@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Text;
 using Core.Interfaces;
 using Core.Models;
@@ -10,7 +9,7 @@ namespace Infrastructure.Services;
 /// </summary>
 public sealed class FileHandler : IFileHandler
 {
-    private const int DefaultBufferSize = 65536; // 64KB buffer for better I/O performance
+    private const int BufferSize = 65536;
 
     /// <inheritdoc />
     public void WriteChannels(string path, IEnumerable<Channel> channels)
@@ -18,16 +17,11 @@ public sealed class FileHandler : IFileHandler
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(channels);
 
-        var content = BuildM3uContent(channels);
-
-        // Ensure directory exists
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-        {
             Directory.CreateDirectory(directory);
-        }
 
-        File.WriteAllText(path, content, Encoding.UTF8);
+        File.WriteAllText(path, BuildM3uContent(channels), Encoding.UTF8);
     }
 
     /// <inheritdoc />
@@ -36,39 +30,23 @@ public sealed class FileHandler : IFileHandler
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(channels);
 
-        // Ensure directory exists
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-        {
             Directory.CreateDirectory(directory);
-        }
 
-        // Use StreamWriter for better memory efficiency with large files
-        await using var stream = new FileStream(
-            path,
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.None,
-            DefaultBufferSize,
-            FileOptions.Asynchronous);
-        await using var writer = new StreamWriter(stream, Encoding.UTF8, DefaultBufferSize);
+        await using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize, FileOptions.Asynchronous);
+        await using var writer = new StreamWriter(stream, Encoding.UTF8, BufferSize);
 
         await writer.WriteLineAsync("#EXTM3U");
 
         foreach (var channel in channels)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            // Write EXTINF line with proper formatting
             await writer.WriteLineAsync(FormatExtinfLine(channel));
 
-            // Write group if present
             if (!string.IsNullOrEmpty(channel.GroupName))
-            {
                 await writer.WriteLineAsync(FormatGroupLine(channel.GroupName));
-            }
 
-            // Write link
             await writer.WriteLineAsync(channel.Link);
         }
     }
@@ -76,83 +54,40 @@ public sealed class FileHandler : IFileHandler
     /// <inheritdoc />
     public void DeleteFileIfExists(string path)
     {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch (IOException)
-        {
-            // File might be in use, ignore
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // No permission, ignore
-        }
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <inheritdoc />
     public void EnsureDirectoryExists(string path)
     {
         if (!string.IsNullOrEmpty(path) && !Directory.Exists(path))
-        {
             Directory.CreateDirectory(path);
-        }
     }
 
-    /// <summary>
-    /// Formats the EXTINF line properly for M3U output.
-    /// </summary>
-    private static string FormatExtinfLine(Channel channel)
-    {
-        // If the name already starts with #EXTINF, return as-is
-        if (channel.Name.StartsWith("#EXTINF", StringComparison.OrdinalIgnoreCase))
-        {
-            return channel.Name;
-        }
+    private static string FormatExtinfLine(Channel channel) =>
+        channel.Name.StartsWith("#EXTINF", StringComparison.OrdinalIgnoreCase)
+            ? channel.Name
+            : $"#EXTINF:-1,{channel.Name}";
 
-        // Otherwise, create a proper EXTINF line
-        return $"#EXTINF:-1,{channel.Name}";
-    }
+    private static string FormatGroupLine(string groupName) =>
+        groupName.StartsWith("#EXTGRP:", StringComparison.OrdinalIgnoreCase)
+            ? groupName
+            : $"#EXTGRP:{groupName}";
 
-    /// <summary>
-    /// Formats the group line properly for M3U output.
-    /// </summary>
-    private static string FormatGroupLine(string groupName)
-    {
-        // If already formatted as EXTGRP, return as-is
-        if (groupName.StartsWith("#EXTGRP:", StringComparison.OrdinalIgnoreCase))
-        {
-            return groupName;
-        }
-
-        return $"#EXTGRP:{groupName}";
-    }
-
-    /// <summary>
-    /// Builds M3U file content from channels (for sync write).
-    /// </summary>
     private static string BuildM3uContent(IEnumerable<Channel> channels)
     {
         var channelList = channels as IReadOnlyList<Channel> ?? channels.ToList();
-
-        // Estimate capacity: header + (extinf + group + link + newline) per channel
-        var estimatedSize = 10 + (channelList.Count * 200);
-        var sb = new StringBuilder(estimatedSize);
+        var sb = new StringBuilder(10 + channelList.Count * 200);
 
         sb.AppendLine("#EXTM3U");
 
         foreach (var channel in channelList)
         {
             sb.AppendLine(FormatExtinfLine(channel));
-
             if (!string.IsNullOrEmpty(channel.GroupName))
-            {
                 sb.AppendLine(FormatGroupLine(channel.GroupName));
-            }
-
             sb.AppendLine(channel.Link);
         }
 

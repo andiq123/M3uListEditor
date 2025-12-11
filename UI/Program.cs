@@ -1,12 +1,7 @@
-﻿using System.Text;
 using Core.Interfaces;
 using Core.Models;
 using Infrastructure;
 using Infrastructure.Services;
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// M3U List Editor - Clean your playlists by removing dead links
-// ═══════════════════════════════════════════════════════════════════════════════
 
 var cli = new CliHandler(args);
 
@@ -16,22 +11,19 @@ if (cli.ShowHelp)
     return;
 }
 
-// Setup cancellation
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
-    e.Cancel = false; // Don't prevent the default behavior - let it terminate
+    e.Cancel = false;
     cts.Cancel();
     cli.PrintWarning("\n⚠ Cancelling...");
-    Environment.Exit(130); // Standard exit code for Ctrl+C
+    Environment.Exit(130);
 };
 
 try
 {
-    // Parse command line arguments FIRST (before creating HttpClient)
     var parsedArgs = cli.ParseArguments();
 
-    // Create HttpClient with timeout configured BEFORE any requests
     using var httpClient = new HttpClient
     {
         Timeout = parsedArgs.Timeout ?? AppSettings.DefaultTimeout
@@ -39,8 +31,6 @@ try
 
     var fileHandler = new FileHandler();
     var fileDownloader = new FileDownloader(httpClient, fileHandler);
-
-    // Now resolve the actual settings (may download if URL)
     var settings = await cli.ResolveSettingsAsync(parsedArgs, fileDownloader, cts.Token);
 
     if (settings is null)
@@ -49,15 +39,12 @@ try
         return;
     }
 
-    // Build services
     var signalTester = new SignalTester(httpClient);
     var parser = new M3uParser();
     var duplicateRemover = new DuplicateRemover();
     var channelFilter = new ChannelFilter(signalTester, settings.MaxConcurrency);
-
     var engine = new M3uCleanerEngine(parser, channelFilter, duplicateRemover, fileHandler);
 
-    // Setup progress reporting with visual progress bar
     var lastPercent = -1;
     var progress = new Progress<ProgressReportModel>(report =>
     {
@@ -70,10 +57,7 @@ try
     cli.PrintSettings(settings);
     Console.WriteLine();
 
-    // Process the M3U file
     var report = await engine.ProcessAsync(settings, progress, cts.Token);
-
-    // Display results
     cli.PrintResults(report, settings);
 }
 catch (OperationCanceledException)
@@ -95,10 +79,6 @@ catch (Exception ex)
     }
     Environment.Exit(1);
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CLI Handler - Encapsulates all CLI presentation logic
-// ═══════════════════════════════════════════════════════════════════════════════
 
 internal sealed class CliHandler
 {
@@ -162,7 +142,6 @@ internal sealed class CliHandler
         PrintColored("  CONFIGURATION\n", ConsoleColor.White);
         PrintColored("  ─────────────────────────────────────\n", ConsoleColor.DarkGray);
 
-        // Source
         PrintColored("  Source:      ", ConsoleColor.DarkGray);
         if (settings.IsLinkSourcePath)
         {
@@ -170,11 +149,9 @@ internal sealed class CliHandler
         }
         Console.WriteLine(Path.GetFileName(settings.SourcePath));
 
-        // Destination
         PrintColored("  Destination: ", ConsoleColor.DarkGray);
         Console.WriteLine(settings.ExportPath);
 
-        // Settings row
         PrintColored("  ─────────────────────────────────────\n", ConsoleColor.DarkGray);
         PrintColored("  Timeout: ", ConsoleColor.DarkGray);
         Console.Write($"{(settings.Timeout ?? AppSettings.DefaultTimeout).TotalSeconds}s");
@@ -185,7 +162,6 @@ internal sealed class CliHandler
         Console.WriteLine();
         PrintColored("  ─────────────────────────────────────\n", ConsoleColor.DarkGray);
 
-        // Hints for users
         PrintColored("  Tip: ", ConsoleColor.DarkYellow);
         PrintColored("Use ", ConsoleColor.DarkGray);
         PrintColored("-dest <path>", ConsoleColor.Cyan);
@@ -198,17 +174,14 @@ internal sealed class CliHandler
     {
         Console.SetCursorPosition(0, Console.CursorTop > 0 ? Console.CursorTop : 0);
 
-        // Progress bar
         const int barWidth = 30;
         var filled = (int)(barWidth * report.PercentageCompleted / 100.0);
         var empty = barWidth - filled;
-
         var bar = new string('█', filled) + new string('░', empty);
 
         PrintColored($"  [{bar}] {report.PercentageCompleted,3}%", ConsoleColor.DarkCyan);
         Console.WriteLine();
 
-        // Stats line
         PrintColored($"  ✓ ", ConsoleColor.Green);
         Console.Write($"{report.WorkingChannelsCount,-5}");
         PrintColored($"  ✗ ", ConsoleColor.Red);
@@ -216,7 +189,6 @@ internal sealed class CliHandler
         PrintColored($"  Total: ", ConsoleColor.DarkGray);
         Console.WriteLine($"{report.WorkingChannelsCount + report.NotWorkingChannelsCount}/{report.ChannelsCountTotal}");
 
-        // Move cursor back up for next update
         Console.SetCursorPosition(0, Console.CursorTop - 2);
     }
 
@@ -238,17 +210,14 @@ internal sealed class CliHandler
         PrintColored("  RESULTS\n", ConsoleColor.White);
         PrintColored("  ─────────────────────────────────────\n", ConsoleColor.DarkGray);
 
-        // Working channels
         PrintColored("  Working:    ", ConsoleColor.DarkGray);
         PrintColored($"{report.WorkingChannelsCount}", ConsoleColor.Green);
         PrintColored($" / {report.TotalChannelsCount}", ConsoleColor.DarkGray);
         PrintColored($"  ({successRate:F1}%)\n", ConsoleColor.DarkCyan);
 
-        // Failed channels
         PrintColored("  Failed:     ", ConsoleColor.DarkGray);
         PrintColored($"{failedCount}\n", failedCount > 0 ? ConsoleColor.Red : ConsoleColor.Green);
 
-        // Duplicates removed
         if (report.DoublesRemovedCount > 0)
         {
             PrintColored("  Duplicates: ", ConsoleColor.DarkGray);
@@ -257,13 +226,11 @@ internal sealed class CliHandler
 
         PrintColored("  ─────────────────────────────────────\n", ConsoleColor.DarkGray);
 
-        // Output file info
         PrintColored("  OUTPUT FILE\n", ConsoleColor.White);
         PrintColored("  ─────────────────────────────────────\n", ConsoleColor.DarkGray);
         PrintColored("  Path: ", ConsoleColor.DarkGray);
         Console.WriteLine(settings.ExportPath);
 
-        // Show file size if exists
         if (File.Exists(settings.ExportPath))
         {
             var fileInfo = new FileInfo(settings.ExportPath);
@@ -288,9 +255,6 @@ internal sealed class CliHandler
         return $"{size:0.##} {sizes[order]}";
     }
 
-    /// <summary>
-    /// Parses command line arguments synchronously (no HTTP calls).
-    /// </summary>
     public ParsedArguments ParseArguments()
     {
         string? sourcePath = null;
@@ -337,9 +301,6 @@ internal sealed class CliHandler
         return new ParsedArguments(sourcePath, exportPath, timeout, removeDoubles, maxConcurrency);
     }
 
-    /// <summary>
-    /// Resolves parsed arguments into AppSettings, downloading if needed.
-    /// </summary>
     public async Task<AppSettings?> ResolveSettingsAsync(
         ParsedArguments parsed,
         IFileDownloader fileDownloader,
@@ -348,7 +309,6 @@ internal sealed class CliHandler
         var sourcePath = parsed.SourcePath;
         var isLinkSource = false;
 
-        // Interactive mode if no source specified
         if (string.IsNullOrEmpty(sourcePath))
         {
             PrintHeader();
@@ -365,7 +325,6 @@ internal sealed class CliHandler
             Console.WriteLine();
         }
 
-        // Handle URL source
         if (Uri.TryCreate(sourcePath, UriKind.Absolute, out var uri) &&
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
         {
@@ -374,14 +333,12 @@ internal sealed class CliHandler
             sourcePath = await fileDownloader.DownloadAsync(sourcePath, cancellationToken);
         }
 
-        // Validate source exists
         if (!File.Exists(sourcePath))
         {
             PrintError($"✗ File not found: {sourcePath}");
             return null;
         }
 
-        // Generate export path if not specified - default to temp folder
         var exportPath = parsed.ExportPath;
         if (string.IsNullOrEmpty(exportPath))
         {
@@ -429,9 +386,6 @@ internal sealed class CliHandler
         value.Equals("no", StringComparison.OrdinalIgnoreCase);
 }
 
-/// <summary>
-/// Parsed command line arguments (before downloading/validation).
-/// </summary>
 internal record ParsedArguments(
     string? SourcePath,
     string? ExportPath,
