@@ -3,13 +3,98 @@ name: Build and Release
 on:
   push:
     branches: [main]
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      version_bump:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate version
+        id: version
+        run: |
+          # Get latest tag or default to v1.0.0
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
+          echo "Latest tag: $LATEST_TAG"
+
+          # Parse version numbers
+          VERSION=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          # Determine bump type
+          BUMP_TYPE="${{ github.event.inputs.version_bump }}"
+
+          # If no manual input, analyze commits for conventional commits
+          if [ -z "$BUMP_TYPE" ]; then
+            # Check commits since last tag for version bump hints
+            COMMITS=$(git log ${LATEST_TAG}..HEAD --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
+
+            if echo "$COMMITS" | grep -qiE "^(BREAKING CHANGE|feat!|fix!):"; then
+              BUMP_TYPE="major"
+            elif echo "$COMMITS" | grep -qiE "^feat(\(.+\))?:"; then
+              BUMP_TYPE="minor"
+            else
+              BUMP_TYPE="patch"
+            fi
+          fi
+
+          echo "Bump type: $BUMP_TYPE"
+
+          # Calculate new version
+          case $BUMP_TYPE in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          NEW_TAG="v${NEW_VERSION}"
+
+          # If triggered by tag push, use that tag
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            NEW_TAG="${{ github.ref_name }}"
+            NEW_VERSION="${NEW_TAG#v}"
+          fi
+
+          echo "New version: $NEW_VERSION"
+          echo "New tag: $NEW_TAG"
+
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+
   build:
+    needs: version
     strategy:
       matrix:
         include:
@@ -38,20 +123,13 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: "9.0.x"
 
       - name: Restore dependencies
         run: dotnet restore
 
       - name: Publish
-        run: |
-          dotnet publish UI/UI.csproj \
-            -c Release \
-            -r ${{ matrix.runtime }} \
-            --self-contained true \
-            -p:PublishSingleFile=true \
-            -p:IncludeNativeLibrariesForSelfExtract=true \
-            -o ./publish
+        run: dotnet publish UI/UI.csproj -c Release -r ${{ matrix.runtime }} --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:Version=${{ needs.version.outputs.version }} -o ./publish
 
       - name: Rename artifact (Unix)
         if: matrix.os != 'windows-latest'
@@ -69,48 +147,47 @@ jobs:
           path: ./publish/${{ matrix.artifact }}
 
   release:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
 
-      - name: Generate version
-        id: version
+      - name: Generate changelog
+        id: changelog
         run: |
-          VERSION="v1.0.${{ github.run_number }}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Generated version: $VERSION"
+          # Get latest tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          echo "## What's Changed" > changelog.md
+          echo "" >> changelog.md
+
+          if [ -n "$LATEST_TAG" ]; then
+            # Get commits since last tag
+            git log ${LATEST_TAG}..HEAD --pretty=format:"- %s (%h)" >> changelog.md
+          else
+            # Get recent commits
+            git log -20 --pretty=format:"- %s (%h)" >> changelog.md
+          fi
+
+          echo "" >> changelog.md
+          echo "" >> changelog.md
+          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LATEST_TAG}...${{ needs.version.outputs.tag }}" >> changelog.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
-          body: |
-            Automated release from commit ${{ github.sha }}
-
-            ## Downloads
-            - **Windows**: `m3u-editor-win-x64.exe`
-            - **macOS Intel**: `m3u-editor-osx-x64`
-            - **macOS Apple Silicon**: `m3u-editor-osx-arm64`
-            - **Linux x64**: `m3u-editor-linux-x64`
-            - **Linux ARM64**: `m3u-editor-linux-arm64`
-
-            ## Usage
-            ```bash
-            # Make executable (Linux/macOS)
-            chmod +x m3u-editor-*
-
-            # Run
-            ./m3u-editor-osx-arm64 -h
-            ```
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          body_path: changelog.md
           files: |
             ./artifacts/m3u-editor-win-x64.exe/*
             ./artifacts/m3u-editor-osx-x64/*
