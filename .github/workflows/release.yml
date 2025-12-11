@@ -1,0 +1,123 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            runtime: linux-x64
+            artifact: m3u-editor-linux-x64
+          - os: ubuntu-latest
+            runtime: linux-arm64
+            artifact: m3u-editor-linux-arm64
+          - os: windows-latest
+            runtime: win-x64
+            artifact: m3u-editor-win-x64.exe
+          - os: macos-latest
+            runtime: osx-x64
+            artifact: m3u-editor-osx-x64
+          - os: macos-latest
+            runtime: osx-arm64
+            artifact: m3u-editor-osx-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Publish
+        run: |
+          dotnet publish UI/UI.csproj \
+            -c Release \
+            -r ${{ matrix.runtime }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -o ./publish
+
+      - name: Rename artifact (Unix)
+        if: matrix.os != 'windows-latest'
+        run: mv ./publish/UI ./publish/${{ matrix.artifact }}
+
+      - name: Rename artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        run: mv ./publish/UI.exe ./publish/${{ matrix.artifact }}
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ./publish/${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Generate version
+        id: version
+        run: |
+          VERSION="v1.0.${{ github.run_number }}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            Automated release from commit ${{ github.sha }}
+
+            ## Downloads
+            - **Windows**: `m3u-editor-win-x64.exe`
+            - **macOS Intel**: `m3u-editor-osx-x64`
+            - **macOS Apple Silicon**: `m3u-editor-osx-arm64`
+            - **Linux x64**: `m3u-editor-linux-x64`
+            - **Linux ARM64**: `m3u-editor-linux-arm64`
+
+            ## Usage
+            ```bash
+            # Make executable (Linux/macOS)
+            chmod +x m3u-editor-*
+
+            # Run
+            ./m3u-editor-osx-arm64 -h
+            ```
+          files: |
+            ./artifacts/m3u-editor-win-x64.exe/*
+            ./artifacts/m3u-editor-osx-x64/*
+            ./artifacts/m3u-editor-osx-arm64/*
+            ./artifacts/m3u-editor-linux-x64/*
+            ./artifacts/m3u-editor-linux-arm64/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
